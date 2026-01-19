@@ -1,217 +1,648 @@
-// ✅ Prévisions: maintenant -> demain 23:00, AGRÉGÉES par blocs de 3h + séparation jour
-function renderForecastNowToTomorrow23_every3h_withDayBreak(times, temp, rain, wind, wx, now){
-  const nowMs = now.getTime();
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Météo – secteur Châteauneuf-les-Bains (63)</title>
 
-  const end = new Date(now);
-  end.setDate(end.getDate() + 1);
-  end.setHours(23,0,0,0);
-  const endMs = end.getTime();
+<style>
+  :root{
+    --bg: transparent;
+    --card: rgba(255,255,255,.92);
+    --border: rgba(0,0,0,.10);
+    --text: #111;
+    --muted: #666;
+    --rain: rgba(80, 140, 255, .55);
+    --shadow: 0 6px 18px rgba(0,0,0,.10);
+    --radius: 16px;
+  }
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,Arial,sans-serif;}
+  .wrap{max-width:980px;margin:0 auto;padding:12px;}
+  .widget{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
+  .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:12px 14px;border-bottom:1px solid var(--border);backdrop-filter: blur(6px);}
+  .title{font-size:16px;font-weight:850;margin:0;line-height:1.2;}
+  .sub{font-size:12px;color:var(--muted);margin-top:2px;}
+  .right{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+  .btn{padding:8px 10px;border:0;border-radius:12px;background:#1f6feb;color:#fff;font-weight:850;cursor:pointer;font-size:12px;}
+  .btn:hover{filter:brightness(.95)}
+  .status{font-size:12px;color:var(--muted)}
+  .section{padding:12px 14px;}
+  .h2{font-size:13px;font-weight:850;margin:0 0 8px;color:#222}
+  .muted{color:var(--muted);font-size:12px}
 
-  const timeline = document.getElementById("timeline");
-  timeline.innerHTML = "";
+  .chartWrap{border:1px solid var(--border);border-radius:14px;padding:10px;background:rgba(255,255,255,.75)}
+  canvas{width:100%;height:250px;display:block}
 
-  // Seuil minuit pour afficher "DEMAIN"
-  const todayMidnight = new Date(now);
-  todayMidnight.setHours(0,0,0,0);
-  const tomorrowMidnight = new Date(todayMidnight);
-  tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
-  const tomorrowMs = tomorrowMidnight.getTime();
+  .kpi{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+  .kbox{border:1px solid var(--border);border-radius:14px;padding:10px;background:rgba(255,255,255,.7)}
+  .klabel{font-size:11px;color:var(--muted)}
+  .kval{font-size:18px;font-weight:900;margin-top:4px}
 
-  // ✅ On construit de vrais blocs 3h, avec cumul pluie etc.
-  const blocks = build3hBlocks(times, temp, rain, wind, wx, nowMs, endMs);
+  .timelineWrap{margin-top:10px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.70);padding:10px;}
+  .timelineHead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+  .hint{font-size:11px;color:var(--muted)}
+  .timeline{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;-webkit-overflow-scrolling: touch;padding-bottom:6px;}
+  .timeline::-webkit-scrollbar{height:10px}
+  .timeline::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:999px}
+  .timeline::-webkit-scrollbar-track{background:rgba(0,0,0,.05);border-radius:999px}
 
-  let insertedTodayPill = false;
-  let insertedTomorrowPill = false;
+  /* Cartes prévision */
+  .slot{
+    flex:0 0 calc((100% - 7*8px)/8);
+    min-width:120px;
+    border:1px solid rgba(0,0,0,.10);
+    border-radius:14px;
+    padding:8px 8px 9px;
+    background:rgba(255,255,255,.78);
+    scroll-snap-align:start;
+  }
+  .tHour{font-size:11px;color:var(--muted);font-weight:800}
+  .topRow{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-top:4px}
+  .tTemp{font-size:16px;font-weight:950;line-height:1}
+  .wx{display:flex;flex-direction:column;align-items:flex-end;line-height:1.05;margin-top:-2px;}
+  .wxIcon{font-size:18px}
+  .wxText{font-size:10px;color:var(--muted);font-weight:800;max-width:120px;text-align:right}
+  .mini{display:flex;gap:8px;align-items:center;margin-top:8px;color:var(--muted);font-size:11px}
+  .dot{width:7px;height:7px;border-radius:999px;background:var(--rain);display:inline-block}
+  .arrow{display:inline-block;transform:translateY(-1px)}
 
-  let firstIso = null, lastIso = null;
+  /* Séparateur de jour dans la timeline */
+  .dayBreak{
+    flex: 0 0 auto;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:0 6px;
+    scroll-snap-align:start;
+  }
+  .dayLine{
+    width:2px;
+    height:86px;
+    background:rgba(0,0,0,.18);
+    border-radius:999px;
+  }
+  .dayPill{
+    font-size:11px;
+    font-weight:900;
+    color:#222;
+    background:rgba(0,0,0,.06);
+    border:1px solid rgba(0,0,0,.10);
+    padding:7px 10px;
+    border-radius:999px;
+    white-space:nowrap;
+  }
 
-  for (const b of blocks){
-    if(!insertedTodayPill){
-      timeline.insertAdjacentHTML("beforeend", `
-        <div class="dayBreak" aria-label="Jour courant">
-          <div class="dayPill">AUJOURD’HUI</div>
-        </div>
-      `);
-      insertedTodayPill = true;
-    }
+  @media (max-width:900px){ canvas{height:230px} .slot{flex-basis: calc((100% - 5*8px)/6);} }
+  @media (max-width:640px){
+    .wrap{padding:8px}
+    canvas{height:210px}
+    .kpi{grid-template-columns:1fr}
+    .slot{flex-basis: calc((100% - 1*8px)/2);}
+    .tTemp{font-size:15px}
+    .wxIcon{font-size:17px}
+    .dayLine{height:78px}
+  }
 
-    if (!insertedTomorrowPill && b.startMs >= tomorrowMs){
-      timeline.insertAdjacentHTML("beforeend", `
-        <div class="dayBreak" aria-label="Changement de jour">
-          <div class="dayLine"></div>
-          <div class="dayPill">DEMAIN</div>
-        </div>
-      `);
-      insertedTomorrowPill = true;
-    }
+  .footer{padding:10px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)}
+</style>
+</head>
 
-    if(!firstIso) firstIso = b.startIso;
-    lastIso = b.endIso;
-
-    const col = tempColor(b.tempAvg);
-    const wxInfo = wmoToIcon(b.wxCode);
-
-    // Libellé horaire: "09:00–12:00"
-    const label = `${hourLabel(b.startIso)}–${hourLabel(b.endIso)}`;
-
-    timeline.insertAdjacentHTML("beforeend", `
-      <div class="slot">
-        <div class="tHour">${label}</div>
-
-        <div class="topRow">
-          <div class="tTemp" style="color:${col}">${fmt(b.tempAvg,0)}°</div>
-          <div class="wx" title="${wxInfo.label}">
-            <div class="wxIcon">${wxInfo.icon}</div>
-            <div class="wxText">${wxInfo.label}</div>
-          </div>
-        </div>
-
-        <!-- ✅ pluie = cumul 3h -->
-        <div class="mini"><span class="dot"></span> ${fmt(b.rainSum,2)} mm / 3h</div>
-        <!-- ✅ vent = max 3h -->
-        <div class="mini"><span class="arrow">➝</span> ${fmt(b.windMax,0)} km/h</div>
+<body>
+<div class="wrap">
+  <div class="widget">
+    <div class="head">
+      <div>
+        <div class="title">Météo – secteur Châteauneuf-les-Bains (63)</div>
+        <div class="sub">Observations réelles hier jusqu'à aujourd’hui / Prévisions agrégées par tranches de 3h (mm / 3h)</div>
       </div>
-    `);
-  }
+      <div class="right">
+        <button class="btn" id="btn">Actualiser</button>
+        <div class="status" id="status">—</div>
+      </div>
+    </div>
 
-  const tlRange = document.getElementById("tlRange");
-  tlRange.textContent = (firstIso && lastIso)
-    ? `${dateLabel(firstIso)} ${hourLabel(firstIso)} → ${dateLabel(lastIso)} ${hourLabel(lastIso)}`
-    : "—";
-}
+    <div class="section">
+      <div class="h2">Historique (hier + aujourd’hui)</div>
+      <div class="chartWrap">
+        <canvas id="chart" width="1000" height="300"></canvas>
+        <div class="muted" id="rangeTxt" style="margin-top:8px">—</div>
+        <div class="muted" style="margin-top:4px">Courbe : température (°C) • Barres : pluie (mm/h) — échelle fixe 0→10</div>
+      </div>
 
+      <div class="h2" style="margin-top:12px">Aujourd’hui</div>
+      <div class="kpi">
+        <div class="kbox">
+          <div class="klabel">Température min / max</div>
+          <div class="kval" id="tMinMax">—</div>
+        </div>
+        <div class="kbox">
+          <div class="klabel">Pluie totale</div>
+          <div class="kval" id="rainTotal">—</div>
+        </div>
+        <div class="kbox">
+          <div class="klabel">Vent max (horaire)</div>
+          <div class="kval" id="windMax">—</div>
+        </div>
+      </div>
 
-/**
- * Construit des blocs de 3 heures “réels” à partir des séries horaires :
- * - pluie : somme des 3 heures (mm / 3h) ✅
- * - température : moyenne des 3 heures
- * - vent : max des 3 heures
- * - code météo : heuristique (heure la plus pluvieuse, sinon "pire" code)
- */
-function build3hBlocks(times, temp, rain, wind, wx, fromMs, toMs){
-  // 1) on garde uniquement les indices dans [fromMs, toMs]
-  const idx = [];
-  for(let i=0;i<times.length;i++){
-    const ms = new Date(times[i]).getTime();
-    if(ms < fromMs) continue;
-    if(ms > toMs) break; // times trié
-    idx.push(i);
-  }
-  if(!idx.length) return [];
+      <div class="h2" style="margin-top:12px">Prévisions (tranches de 3h)</div>
+      <div class="timelineWrap">
+        <div class="timelineHead">
+          <div class="hint">Pluie affichée = cumul sur 3h • Défilement horizontal</div>
+          <div class="hint" id="tlRange">—</div>
+        </div>
+        <div class="timeline" id="timeline" aria-label="Prévisions prochaines heures"></div>
+      </div>
+    </div>
 
-  // 2) point de départ = prochaine heure pleine ">= now"
-  // (Open-Meteo est au pas horaire : 13:00, 14:00, ...)
-  // Si tu veux vraiment “aligner à 3h” (00/03/06...), dis-le : on le fait aussi.
-  let startI = idx[0];
+    <div class="footer">
+      Point proche station 63354004 (lat 46.032667, lon 2.803833) • Modèles Météo-France via Open-Meteo
+    </div>
+  </div>
+</div>
 
-  const blocks = [];
-  for(let p=startI; p < times.length; p += 3){
-    const msStart = new Date(times[p]).getTime();
-    if(msStart < fromMs) continue;
-    if(msStart > toMs) break;
+<script>
+  const LAT = 46.032667;
+  const LON = 2.803833;
+  const RAIN_MAX_FIXED = 10;
 
-    const groupIdx = [p, p+1, p+2].filter(j => j < times.length);
-    // stop si on sort de la plage
-    if(new Date(times[groupIdx[0]]).getTime() > toMs) break;
+  const statusEl = document.getElementById("status");
 
-    // On prend fin = dernière heure du bloc (ex: 09–12 => fin=12:00)
-    // (si il manque des heures, on s’adapte)
-    const endIndex = groupIdx[groupIdx.length-1];
-    const msEnd = new Date(times[endIndex]).getTime();
-    if(msEnd > toMs) break;
-
-    // ---- agrégations ----
-    let tSum = 0, tCount = 0;
-    let rainSum = 0;
-    let windMax = 0;
-
-    // Pour choisir l’icône : heure la plus pluvieuse, sinon “pire” code
-    let maxRainHour = -1;
-    let maxRain = -1;
-    let worstCode = -1;
-
-    for(const j of groupIdx){
-      const t = temp[j];
-      const r = rain[j];
-      const w = wind[j];
-      const c = wx[j];
-
-      if(typeof t === "number"){ tSum += t; tCount++; }
-      if(typeof r === "number"){
-        rainSum += r;                 // ✅ cumul des mm de chaque heure
-        if(r > maxRain){ maxRain = r; maxRainHour = j; }
-      }
-      if(typeof w === "number"){ windMax = Math.max(windMax, w); }
-
-      // “pire” code : heuristique simple (orage > neige > pluie > brouillard > nuages > soleil)
-      if(Number.isFinite(c)){
-        const severity = wmoSeverity(c);
-        if(severity > worstCode) worstCode = severity;
-      }
+  function tempColor(t){
+    if (t === null || t === undefined || Number.isNaN(t)) return "#666";
+    const min = -10, max = 35;
+    let x = (t - min) / (max - min);
+    x = Math.max(0, Math.min(1, x));
+    const stops = [
+      {p:0.00, c:[36,  99, 235]},
+      {p:0.25, c:[ 0, 180, 255]},
+      {p:0.50, c:[255,216, 102]},
+      {p:0.75, c:[255,140,  60]},
+      {p:1.00, c:[235, 64,  52]}
+    ];
+    let a=stops[0], b=stops.at(-1);
+    for(let i=0;i<stops.length-1;i++){
+      if (x >= stops[i].p && x <= stops[i+1].p){ a=stops[i]; b=stops[i+1]; break; }
     }
-
-    const tempAvg = tCount ? (tSum / tCount) : null;
-
-    // code retenu :
-    // - s’il y a de la pluie sur le bloc, icône = l’heure la plus pluvieuse
-    // - sinon icône = “pire condition” du bloc
-    let wxCode = null;
-    if(maxRain > 0 && maxRainHour >= 0){
-      wxCode = wx[maxRainHour];
-    } else {
-      // On reprend un code réel du bloc correspondant au max de sévérité
-      wxCode = pickWorstCode(groupIdx, wx);
-    }
-
-    // libellé : on affiche une plage "start–end+1h" plus intuitive
-    // ex group [09,10,11] => "09:00–12:00"
-    const startIso = times[groupIdx[0]];
-    const endPlus1 = new Date(times[endIndex]);
-    endPlus1.setHours(endPlus1.getHours() + 1);
-    const endIso = endPlus1.toISOString(); // ISO UTC; mais on n’utilise que hourLabel() qui affiche en local
-
-    blocks.push({
-      startIso,
-      endIso,
-      startMs: msStart,
-      endMs: endPlus1.getTime(),
-      tempAvg,
-      rainSum,
-      windMax,
-      wxCode
-    });
+    const t2 = (x - a.p) / ((b.p - a.p) || 1);
+    const r = Math.round(a.c[0] + (b.c[0]-a.c[0])*t2);
+    const g = Math.round(a.c[1] + (b.c[1]-a.c[1])*t2);
+    const bl = Math.round(a.c[2] + (b.c[2]-a.c[2])*t2);
+    return `rgb(${r},${g},${bl})`;
   }
 
-  return blocks;
+  function fmt(n, d=1){
+    if (n === null || n === undefined || Number.isNaN(n)) return "—";
+    return Number(n).toFixed(d);
+  }
+  function hourLabel(iso){
+    const d = new Date(iso);
+    return d.toLocaleString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  }
+  function dateLabel(iso){
+    const d = new Date(iso);
+    return d.toLocaleDateString("fr-FR", { weekday:"short", day:"2-digit", month:"2-digit" });
+  }
 
-  // --- helpers ---
-  function wmoSeverity(code){
+  function wmoToIcon(code){
     const c = Number(code);
-    if(!Number.isFinite(c)) return 0;
-    // orages
-    if(c === 95 || c === 96 || c === 99) return 6;
-    // neige/averses neige
-    if([71,73,75,77,85,86].includes(c)) return 5;
-    // pluie / bruine / averses pluie / verglaçant
-    if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(c)) return 4;
-    // brouillard
-    if(c === 45 || c === 48) return 3;
-    // nuages
-    if(c === 3) return 2;
-    if(c === 2) return 1.5;
-    if(c === 1) return 1;
-    if(c === 0) return 0.5;
-    return 0;
+    if (!Number.isFinite(c)) return { icon:"❔", label:"Inconnu" };
+
+    if (c === 0) return { icon:"☀️", label:"Ciel dégagé" };
+    if (c === 1) return { icon:"🌤️", label:"Plutôt dégagé" };
+    if (c === 2) return { icon:"⛅", label:"Partiellement nuageux" };
+    if (c === 3) return { icon:"☁️", label:"Couvert" };
+
+    if (c === 45) return { icon:"🌫️", label:"Brouillard" };
+    if (c === 48) return { icon:"🌫️", label:"Brouillard givrant" };
+
+    if (c === 51) return { icon:"🌦️", label:"Bruine faible" };
+    if (c === 53) return { icon:"🌦️", label:"Bruine modérée" };
+    if (c === 55) return { icon:"🌧️", label:"Bruine forte" };
+    if (c === 56) return { icon:"🌧️", label:"Bruine verglaçante faible" };
+    if (c === 57) return { icon:"🌧️", label:"Bruine verglaçante forte" };
+
+    if (c === 61) return { icon:"🌧️", label:"Pluie faible" };
+    if (c === 63) return { icon:"🌧️", label:"Pluie modérée" };
+    if (c === 65) return { icon:"🌧️", label:"Pluie forte" };
+    if (c === 66) return { icon:"🌧️", label:"Pluie verglaçante faible" };
+    if (c === 67) return { icon:"🌧️", label:"Pluie verglaçante forte" };
+
+    if (c === 71) return { icon:"🌨️", label:"Neige faible" };
+    if (c === 73) return { icon:"🌨️", label:"Neige modérée" };
+    if (c === 75) return { icon:"🌨️", label:"Neige forte" };
+    if (c === 77) return { icon:"❄️", label:"Grains de neige" };
+
+    if (c === 80) return { icon:"🌦️", label:"Averses faibles" };
+    if (c === 81) return { icon:"🌦️", label:"Averses modérées" };
+    if (c === 82) return { icon:"🌧️", label:"Averses fortes" };
+
+    if (c === 85) return { icon:"🌨️", label:"Averses de neige faibles" };
+    if (c === 86) return { icon:"🌨️", label:"Averses de neige fortes" };
+
+    if (c === 95) return { icon:"⛈️", label:"Orage" };
+    if (c === 96) return { icon:"⛈️", label:"Orage grêle (faible)" };
+    if (c === 99) return { icon:"⛈️", label:"Orage grêle (fort)" };
+
+    return { icon:"🌡️", label:`Code ${c}` };
   }
 
-  function pickWorstCode(groupIdx, wx){
-    let best = null;
-    let bestSev = -1;
-    for(const j of groupIdx){
-      const c = wx[j];
-      const sev = wmoSeverity(c);
-      if(sev > bestSev){ bestSev = sev; best = c; }
+  async function load(){
+    statusEl.textContent = "Chargement…";
+
+    const url =
+      "https://api.open-meteo.com/v1/meteofrance"
+      + `?latitude=${encodeURIComponent(LAT)}&longitude=${encodeURIComponent(LON)}`
+      + "&hourly=temperature_2m,precipitation,wind_speed_10m,weather_code"
+      + "&past_days=1&forecast_days=2"
+      + "&timezone=Europe%2FParis";
+
+    let data;
+    try{
+      const r = await fetch(url);
+      if(!r.ok){ statusEl.textContent = `Erreur HTTP ${r.status}`; return; }
+      data = await r.json();
+    }catch{
+      statusEl.textContent = "Erreur réseau";
+      return;
     }
-    return best;
+
+    statusEl.textContent = "OK";
+
+    const times = data?.hourly?.time || [];
+    const temp  = data?.hourly?.temperature_2m || [];
+    const rain  = data?.hourly?.precipitation || [];
+    const wind  = data?.hourly?.wind_speed_10m || [];
+    const wx    = data?.hourly?.weather_code || [];
+
+    const now = new Date();
+
+    // Historique: hier 00:00 -> maintenant
+    const { tHist, tempHist, rainHist } = sliceYesterdayMidnightToNow(times, temp, rain, now);
+
+    // index séparation jour (premier point >= aujourd'hui 00:00)
+    const dayBreakIndex = findDayBreakIndex(tHist, now);
+
+    // graphe avec séparation visuelle
+    drawChartCombo(tHist, tempHist, rainHist, dayBreakIndex);
+
+    document.getElementById("rangeTxt").textContent =
+      tHist.length ? `${dateLabel(tHist[0])} ${hourLabel(tHist[0])} → ${dateLabel(tHist.at(-1))} ${hourLabel(tHist.at(-1))}` : "—";
+
+    // KPI aujourd’hui
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth()+1).padStart(2,"0");
+    const dd = String(now.getDate()).padStart(2,"0");
+    const todayPrefix = `${yyyy}-${mm}-${dd}T`;
+
+    const idxToday = [];
+    for(let i=0;i<times.length;i++){
+      if(String(times[i]).startsWith(todayPrefix)) idxToday.push(i);
+    }
+
+    let tMin = Infinity, tMax = -Infinity, rainSum = 0, windMax = 0;
+    for(const i of idxToday){
+      const t = temp[i], rr = rain[i], w = wind[i];
+      if (typeof t === "number"){ tMin = Math.min(tMin, t); tMax = Math.max(tMax, t); }
+      if (typeof rr === "number"){ rainSum += rr; }
+      if (typeof w === "number"){ windMax = Math.max(windMax, w); }
+    }
+
+    document.getElementById("tMinMax").textContent =
+      (tMin !== Infinity) ? `${fmt(tMin,1)} / ${fmt(tMax,1)} °C` : "—";
+    document.getElementById("rainTotal").textContent = `${fmt(rainSum,2)} mm`;
+    document.getElementById("windMax").textContent = `${fmt(windMax,0)} km/h`;
+
+    // ✅ Prévisions agrégées par blocs de 3h : pluie = cumul 3h
+    renderForecast3hAggregated(times, temp, rain, wind, wx, now);
   }
-}
+
+  function sliceYesterdayMidnightToNow(times, temp, rain, now){
+    const startToday = new Date(now);
+    startToday.setHours(0,0,0,0);
+
+    const startYesterday = new Date(startToday);
+    startYesterday.setDate(startYesterday.getDate() - 1);
+
+    const fromMs = startYesterday.getTime();
+    const toMs = now.getTime();
+
+    const tHist = [], tempHist = [], rainHist = [];
+    for(let i=0;i<times.length;i++){
+      const ms = new Date(times[i]).getTime();
+      if (ms >= fromMs && ms <= toMs){
+        tHist.push(times[i]);
+        tempHist.push(temp[i]);
+        rainHist.push(rain[i]);
+      }
+    }
+    return { tHist, tempHist, rainHist };
+  }
+
+  function findDayBreakIndex(tHist, now){
+    const startToday = new Date(now);
+    startToday.setHours(0,0,0,0);
+    const startMs = startToday.getTime();
+
+    for(let i=0;i<tHist.length;i++){
+      if(new Date(tHist[i]).getTime() >= startMs) return i;
+    }
+    return -1;
+  }
+
+  // ✅ Prévisions agrégées par tranches de 3h (pluie cumulée sur 3h)
+  function renderForecast3hAggregated(times, temp, rain, wind, wx, now){
+    const nowMs = now.getTime();
+
+    // jusqu’à demain 23:00
+    const end = new Date(now);
+    end.setDate(end.getDate() + 1);
+    end.setHours(23,0,0,0);
+    const endMs = end.getTime();
+
+    // minuit demain pour le séparateur
+    const todayMidnight = new Date(now);
+    todayMidnight.setHours(0,0,0,0);
+    const tomorrowMidnight = new Date(todayMidnight);
+    tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
+    const tomorrowMs = tomorrowMidnight.getTime();
+
+    const timeline = document.getElementById("timeline");
+    timeline.innerHTML = "";
+
+    const blocks = build3hBlocks(times, temp, rain, wind, wx, nowMs, endMs);
+
+    let insertedTodayPill = false;
+    let insertedTomorrowPill = false;
+
+    let firstIso = null, lastIso = null;
+
+    for(const b of blocks){
+      if(!insertedTodayPill){
+        timeline.insertAdjacentHTML("beforeend", `
+          <div class="dayBreak" aria-label="Jour courant">
+            <div class="dayPill">AUJOURD’HUI</div>
+          </div>
+        `);
+        insertedTodayPill = true;
+      }
+
+      if(!insertedTomorrowPill && b.startMs >= tomorrowMs){
+        timeline.insertAdjacentHTML("beforeend", `
+          <div class="dayBreak" aria-label="Changement de jour">
+            <div class="dayLine"></div>
+            <div class="dayPill">DEMAIN</div>
+          </div>
+        `);
+        insertedTomorrowPill = true;
+      }
+
+      if(!firstIso) firstIso = b.startIso;
+      lastIso = b.endIso;
+
+      const col = tempColor(b.tempAvg);
+      const wxInfo = wmoToIcon(b.wxCode);
+
+      const label = `${hourLabel(b.startIso)}–${hourLabel(b.endIso)}`;
+
+      timeline.insertAdjacentHTML("beforeend", `
+        <div class="slot">
+          <div class="tHour">${label}</div>
+
+          <div class="topRow">
+            <div class="tTemp" style="color:${col}">${fmt(b.tempAvg,0)}°</div>
+            <div class="wx" title="${wxInfo.label}">
+              <div class="wxIcon">${wxInfo.icon}</div>
+              <div class="wxText">${wxInfo.label}</div>
+            </div>
+          </div>
+
+          <div class="mini"><span class="dot"></span> ${fmt(b.rainSum,2)} mm / 3h</div>
+          <div class="mini"><span class="arrow">➝</span> ${fmt(b.windMax,0)} km/h</div>
+        </div>
+      `);
+    }
+
+    const tlRange = document.getElementById("tlRange");
+    tlRange.textContent = (firstIso && lastIso)
+      ? `${dateLabel(firstIso)} ${hourLabel(firstIso)} → ${dateLabel(lastIso)} ${hourLabel(lastIso)}`
+      : "—";
+  }
+
+  // Construit des blocs de 3 heures "réels" à partir des séries horaires
+  function build3hBlocks(times, temp, rain, wind, wx, fromMs, toMs){
+    // indices dans la plage
+    const idx = [];
+    for(let i=0;i<times.length;i++){
+      const ms = new Date(times[i]).getTime();
+      if(ms < fromMs) continue;
+      if(ms > toMs) break;
+      idx.push(i);
+    }
+    if(!idx.length) return [];
+
+    // départ = première heure >= now (heure pleine)
+    const startI = idx[0];
+
+    const blocks = [];
+    for(let p=startI; p < times.length; p += 3){
+      const msStart = new Date(times[p]).getTime();
+      if(msStart < fromMs) continue;
+      if(msStart > toMs) break;
+
+      const groupIdx = [p, p+1, p+2].filter(j => j < times.length);
+
+      // si le dernier index sort de la plage -> stop
+      const endIndex = groupIdx[groupIdx.length - 1];
+      const msEndRaw = new Date(times[endIndex]).getTime();
+      if(msEndRaw > toMs) break;
+
+      let tSum = 0, tCount = 0;
+      let rainSum = 0;
+      let windMax = 0;
+
+      let maxRainHour = -1;
+      let maxRain = -1;
+
+      // sévérité pour choisir une icône "pire" si pas de pluie
+      let bestWorstSev = -1;
+      let worstCode = null;
+
+      for(const j of groupIdx){
+        const t = temp[j];
+        const r = rain[j];
+        const w = wind[j];
+        const c = wx[j];
+
+        if(typeof t === "number"){ tSum += t; tCount++; }
+        if(typeof r === "number"){
+          rainSum += r;                    // ✅ cumul mm sur 3h
+          if(r > maxRain){ maxRain = r; maxRainHour = j; }
+        }
+        if(typeof w === "number"){ windMax = Math.max(windMax, w); }
+
+        const sev = wmoSeverity(c);
+        if(sev > bestWorstSev){ bestWorstSev = sev; worstCode = c; }
+      }
+
+      const tempAvg = tCount ? (tSum / tCount) : null;
+
+      // icône : heure la plus pluvieuse si pluie, sinon "pire" condition
+      const wxCode = (maxRain > 0 && maxRainHour >= 0) ? wx[maxRainHour] : worstCode;
+
+      // label : ex [09,10,11] => "09:00–12:00"
+      const startIso = times[groupIdx[0]];
+      const endPlus1 = new Date(times[endIndex]);
+      endPlus1.setHours(endPlus1.getHours() + 1);
+      const endIso = endPlus1.toISOString();
+
+      blocks.push({
+        startIso,
+        endIso,
+        startMs: msStart,
+        endMs: endPlus1.getTime(),
+        tempAvg,
+        rainSum,
+        windMax,
+        wxCode
+      });
+    }
+
+    return blocks;
+
+    function wmoSeverity(code){
+      const c = Number(code);
+      if(!Number.isFinite(c)) return 0;
+
+      if(c === 95 || c === 96 || c === 99) return 6; // orage
+      if([71,73,75,77,85,86].includes(c)) return 5;  // neige
+      if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(c)) return 4; // pluie
+      if(c === 45 || c === 48) return 3; // brouillard
+      if(c === 3) return 2;
+      if(c === 2) return 1.5;
+      if(c === 1) return 1;
+      if(c === 0) return 0.5;
+      return 0;
+    }
+  }
+
+  // Graphe historique avec séparation visuelle "hier / aujourd'hui"
+  function drawChartCombo(times, tempVals, rainVals, dayBreakIndex = -1){
+    const c = document.getElementById("chart");
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0,0,c.width,c.height);
+
+    const padL = 54, padR = 44, padT = 18, padB = 44;
+    const W = c.width - padL - padR;
+    const H = c.height - padT - padB;
+
+    const tNums = tempVals.map(v => (typeof v === "number" ? v : null)).filter(v => v !== null);
+    if(!tNums.length){
+      ctx.fillStyle="#444";
+      ctx.font="12px system-ui, Arial";
+      ctx.fillText("Pas de données", 20, 40);
+      return;
+    }
+
+    const tMin = Math.min(...tNums);
+    const tMax = Math.max(...tNums);
+    const tSpan = (tMax - tMin) || 1;
+
+    const rMax = RAIN_MAX_FIXED;
+    const rSpan = rMax;
+
+    const x  = i => padL + (i/(times.length-1))*W;
+    const yT = v => padT + (1 - ((v - tMin)/tSpan))*H;
+    const yR = v => padT + (1 - ((v - 0)/rSpan))*H;
+
+    // séparation visuelle
+    if (dayBreakIndex > 0 && dayBreakIndex < times.length){
+      const Xb = x(dayBreakIndex);
+
+      ctx.fillStyle = "rgba(31, 111, 235, .06)";
+      ctx.fillRect(Xb, padT, (padL+W) - Xb, H);
+
+      ctx.strokeStyle = "rgba(0,0,0,.25)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(Xb, padT);
+      ctx.lineTo(Xb, padT+H);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(0,0,0,.55)";
+      ctx.font = "11px system-ui, Arial";
+      ctx.textAlign = "left";
+      ctx.fillText("HIER", padL + 6, padT + 12);
+      ctx.fillText("AUJOURD’HUI", Math.min(Xb + 6, padL+W-88), padT + 12);
+      ctx.textAlign = "start";
+    }
+
+    // axes
+    ctx.strokeStyle = "rgba(0,0,0,.10)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, padT);
+    ctx.lineTo(padL, padT+H);
+    ctx.lineTo(padL+W, padT+H);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(padL+W, padT);
+    ctx.lineTo(padL+W, padT+H);
+    ctx.stroke();
+
+    // labels axes
+    ctx.fillStyle = "#444";
+    ctx.font = "12px system-ui, Arial";
+    ctx.fillText(`${tMax.toFixed(1)}°C`, 6, yT(tMax)+4);
+    ctx.fillText(`${tMin.toFixed(1)}°C`, 6, yT(tMin)+4);
+
+    const rightX = padL+W+6;
+    ctx.fillText(`${rMax.toFixed(0)} mm`, rightX, yR(rMax)+4);
+    ctx.fillText(`0 mm`, rightX, yR(0)+4);
+
+    // barres pluie (mm/h)
+    const barW = Math.max(6, Math.floor(W / times.length) - 4);
+    ctx.fillStyle = "rgba(80,140,255,.45)";
+    for(let i=0;i<rainVals.length;i++){
+      let v = (typeof rainVals[i] === "number") ? rainVals[i] : 0;
+      v = Math.min(v, RAIN_MAX_FIXED);
+      if(v <= 0) continue;
+      const Xc = x(i);
+      const x0 = Xc - barW/2;
+      const y0 = yR(v);
+      const h0 = (padT+H) - y0;
+      ctx.fillRect(x0, y0, barW, h0);
+    }
+
+    // courbe température
+    ctx.lineWidth = 2.5;
+    for(let i=1;i<tempVals.length;i++){
+      const a = tempVals[i-1], b = tempVals[i];
+      if(typeof a !== "number" || typeof b !== "number") continue;
+      ctx.strokeStyle = tempColor((a+b)/2);
+      ctx.beginPath();
+      ctx.moveTo(x(i-1), yT(a));
+      ctx.lineTo(x(i), yT(b));
+      ctx.stroke();
+    }
+
+    // ticks
+    ctx.fillStyle = "#666";
+    ctx.strokeStyle = "rgba(0,0,0,.12)";
+    ctx.lineWidth = 1;
+    for(let i=0;i<times.length;i+=6){
+      const X = x(i);
+      ctx.beginPath();
+      ctx.moveTo(X, padT+H);
+      ctx.lineTo(X, padT+H+5);
+      ctx.stroke();
+      ctx.fillText(hourLabel(times[i]), X-14, padT+H+20);
+    }
+  }
+
+  document.getElementById("btn").addEventListener("click", load);
+  load();
+</script>
+</body>
+</html>
